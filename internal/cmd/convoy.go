@@ -920,6 +920,17 @@ func closeConvoyIfComplete(townBeads, convoyID, title string, tracked []trackedI
 		return true, nil
 	}
 
+	// Fresh-read pre-close status. The convoy listing this function feeds from
+	// can return stale data, so a convoy listed as "open" may already be closed.
+	// Calling close + notify in that state re-fires "Convoy landed" mail on
+	// every patrol cycle. Only proceed when we observe an open→closed
+	// transition. (gst-9fn)
+	alreadyClosed, statusErr := convoyAlreadyClosed(townBeads, convoyID)
+	if statusErr == nil && alreadyClosed {
+		fmt.Printf("%s Convoy %s already closed; skipping notification.\n", style.Dim.Render("○"), convoyID)
+		return false, nil
+	}
+
 	reason := "All tracked issues completed"
 	closeArgs := []string{"close", convoyID, "-r", reason}
 	if err := BdCmd(closeArgs...).Dir(townBeads).WithAutoCommit().Run(); err != nil {
@@ -929,6 +940,26 @@ func closeConvoyIfComplete(townBeads, convoyID, title string, tracked []trackedI
 	fmt.Printf("%s Auto-closed convoy 🚚 %s: %s\n", style.Bold.Render("✓"), convoyID, title)
 	notifyConvoyCompletion(townBeads, convoyID, title)
 	return true, nil
+}
+
+// convoyAlreadyClosed returns true if a fresh (non-stale) read of the convoy
+// reports a closed status. Used to gate notifyConvoyCompletion against stale
+// list reads. (gst-9fn)
+func convoyAlreadyClosed(townBeads, convoyID string) (bool, error) {
+	stdout, err := runBdJSON(townBeads, "show", convoyID, "--json")
+	if err != nil {
+		return false, err
+	}
+	var rows []struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(stdout, &rows); err != nil {
+		return false, err
+	}
+	if len(rows) == 0 {
+		return false, fmt.Errorf("convoy %q not found", convoyID)
+	}
+	return normalizeConvoyStatus(rows[0].Status) == convoyStatusClosed, nil
 }
 
 // checkSingleConvoy checks a specific convoy and closes it if all tracked issues are complete.
