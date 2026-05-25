@@ -2049,7 +2049,29 @@ func (e *Engineer) checkAndCloseCompletedConvoys(townRoot, townBeads string) []c
 			continue
 		}
 
-		// All tracked issues are complete - close the convoy
+		// All tracked issues are complete - close the convoy.
+		// Fresh-read pre-close status first: the convoy list above uses
+		// --allow-stale, so a convoy reported as "open" may already be closed.
+		// Calling close + notify in that state re-fires "Convoy landed" mail
+		// on every patrol cycle. Only proceed when we observe an open→closed
+		// transition. (gst-9fn)
+		preShowArgs := []string{"show", convoy.ID, "--json"}
+		preShowCmd := beads.Command(townBeads, townBeads, beads.ReadOnlyPinned, preShowArgs...)
+		var preShowOut bytes.Buffer
+		preShowCmd.Stdout = &preShowOut
+		if err := preShowCmd.Run(); err == nil {
+			var preIssues []struct {
+				Status string `json:"status"`
+			}
+			if err := json.Unmarshal(preShowOut.Bytes(), &preIssues); err == nil && len(preIssues) > 0 {
+				preStatus := preIssues[0].Status
+				if preStatus == "closed" || preStatus == "tombstone" {
+					_, _ = fmt.Fprintf(e.output, "[Engineer] Convoy %s already closed; skipping notification.\n", convoy.ID)
+					continue
+				}
+			}
+		}
+
 		reason := "All tracked issues completed"
 		if len(deps) == 0 {
 			reason = "Empty convoy — auto-closed as definitionally complete"
