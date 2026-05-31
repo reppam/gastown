@@ -288,3 +288,72 @@ func TestFormatWeeklyRollup(t *testing.T) {
 		t.Error("missing anomalies section")
 	}
 }
+
+func TestReportIsNoteworthy(t *testing.T) {
+	// allZero builds a report with every category present but empty, no
+	// promotions/anomalies/errors — the "nothing happened" baseline.
+	allZero := func() *compactReport {
+		r := &compactReport{
+			Date:       "2026-02-09",
+			Categories: make(map[string]*categoryStats),
+		}
+		for _, cat := range categoryOrder {
+			r.Categories[cat] = &categoryStats{}
+		}
+		return r
+	}
+
+	t.Run("empty report is not noteworthy", func(t *testing.T) {
+		if reportIsNoteworthy(allZero()) {
+			t.Error("all-zero report should be suppressed (not noteworthy)")
+		}
+	})
+
+	t.Run("active-only report is not noteworthy", func(t *testing.T) {
+		r := allZero()
+		r.Categories["Heartbeats"].Active = 12
+		if reportIsNoteworthy(r) {
+			t.Error("report with only active wisps should be suppressed")
+		}
+	})
+
+	t.Run("deletions make report noteworthy", func(t *testing.T) {
+		r := allZero()
+		r.Categories["Heartbeats"].Deleted = 1
+		if !reportIsNoteworthy(r) {
+			t.Error("report with deletions should be noteworthy")
+		}
+	})
+
+	t.Run("promotions count makes report noteworthy", func(t *testing.T) {
+		r := allZero()
+		r.Categories["Errors"].Promoted = 1
+		if !reportIsNoteworthy(r) {
+			t.Error("report with a promoted category should be noteworthy")
+		}
+	})
+
+	t.Run("promotions list makes report noteworthy", func(t *testing.T) {
+		r := allZero()
+		r.Promotions = []compactAction{{ID: "w-1", Title: "Stuck error"}}
+		if !reportIsNoteworthy(r) {
+			t.Error("report with promotions should be noteworthy")
+		}
+	})
+
+	t.Run("anomalies make report noteworthy", func(t *testing.T) {
+		r := allZero()
+		r.Anomalies = []string{"unusually high heartbeat volume"}
+		if !reportIsNoteworthy(r) {
+			t.Error("report with anomalies should be noteworthy")
+		}
+	})
+
+	t.Run("errors make report noteworthy", func(t *testing.T) {
+		r := allZero()
+		r.Errors = []string{"failed to delete w-5"}
+		if !reportIsNoteworthy(r) {
+			t.Error("report with errors should be noteworthy")
+		}
+	})
+}
